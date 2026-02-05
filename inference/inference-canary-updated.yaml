@@ -1,0 +1,56 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: aurora-inference-canary
+  namespace: aurora-system
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: aurora-inference
+      track: canary
+  template:
+    metadata:
+      labels:
+        app: aurora-inference
+        track: canary
+    spec:
+      containers:
+      - name: inference
+        image: aayud/aurora-inference:0.3.2  # Updated image
+        ports:
+        - containerPort: 8000
+        env:
+        - name: MODEL_PATH
+          value: /shared-models/california-housing/latest/model.pkl
+        - name: MODEL_VERSION_FILE
+          value: /shared-models/california-housing/latest/metadata.json
+        - name: API_KEY
+          value: aurora-internal-key
+        - name: TRACK
+          value: "canary"
+        volumeMounts:
+        - name: shared-models
+          mountPath: /shared-models
+          readOnly: true
+      
+      volumes:
+      - name: shared-models
+        persistentVolumeClaim:
+          claimName: aurora-model-pvc
+          readOnly: true
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: aurora-inference-canary
+  namespace: aurora-system
+spec:
+  selector:
+    app: aurora-inference
+    track: canary
+  ports:
+  - port: 80
+    targetPort: 8000
+    name: http
+  type: ClusterIP

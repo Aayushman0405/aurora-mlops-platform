@@ -1,0 +1,14 @@
+apiVersion: aurora.io/v1alpha1
+kind: MLDeployment
+metadata:
+  name: housing-canary
+  namespace: aurora-system
+spec:
+  modelName: california-housing
+  strategy:
+    type: Canary
+    canaryWeight: 10
+  slo:
+    latencyP95Ms: 300
+    errorRatePercent: 1.0
+

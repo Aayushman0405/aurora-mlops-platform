@@ -1,0 +1,95 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: aurora-inference
+  namespace: aurora-system
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: aurora-inference
+  template:
+    metadata:
+      labels:
+        app: aurora-inference
+        track: stable
+    spec:
+      initContainers:
+      - name: check-model
+        image: busybox:1.35
+        command: ["sh", "-c"]
+        args:
+        - |
+          echo "Checking model availability..."
+          if [ -f /shared-models/california-housing/latest/model.pkl ]; then
+            echo "✅ Model exists at /shared-models/california-housing/latest/model.pkl"
+            ls -la /shared-models/california-housing/latest/
+          else
+            echo "❌ Model not found!"
+            find /shared-models -name "*.pkl"
+            exit 1
+          fi
+        volumeMounts:
+        - name: shared-models
+          mountPath: /shared-models
+      
+      containers:
+      - name: inference
+        image: aayud/aurora-inference:0.3.2  # Updated image
+        ports:
+        - containerPort: 8000
+        env:
+        - name: MODEL_PATH
+          value: /shared-models/california-housing/latest/model.pkl
+        - name: MODEL_VERSION_FILE
+          value: /shared-models/california-housing/latest/metadata.json
+        - name: API_KEY
+          value: aurora-internal-key
+        - name: ALLOW_MISSING_MODEL
+          value: "false"
+        volumeMounts:
+        - name: shared-models
+          mountPath: /shared-models
+          readOnly: true
+        
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8000
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8000
+          initialDelaySeconds: 10
+          periodSeconds: 5
+        
+        startupProbe:
+          httpGet:
+            path: /health
+            port: 8000
+          failureThreshold: 30
+          periodSeconds: 5
+      
+      volumes:
+      - name: shared-models
+        persistentVolumeClaim:
+          claimName: aurora-model-pvc
+          readOnly: true
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: aurora-inference
+  namespace: aurora-system
+spec:
+  selector:
+    app: aurora-inference
+    track: stable
+  ports:
+  - port: 80
+    targetPort: 8000
+    name: http
+  type: ClusterIP

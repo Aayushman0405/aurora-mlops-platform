@@ -1,0 +1,12 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: aurora-model-pvc
+  namespace: aurora-system
+spec:
+  accessModes:
+    - ReadWriteMany  # Changed to RWX
+  storageClassName: cephfs  # Changed to cephfs
+  resources:
+    requests:
+      storage: 5Gi

@@ -1,0 +1,52 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: init-model-storage
+  namespace: aurora-system
+spec:
+  ttlSecondsAfterFinished: 300
+  template:
+    spec:
+      containers:
+      - name: init
+        image: busybox:1.35
+        command:
+        - sh
+        - -c
+        - |
+          echo "Initializing shared model storage..."
+          
+          # Create directory structure
+          mkdir -p /models/registry
+          mkdir -p /models/california-housing
+          mkdir -p /models/california-housing/versions
+          mkdir -p /models/california-housing/latest
+          mkdir -p /models/tmp
+          
+          # Create registry files
+          echo "v1.0.0" > /models/registry/current-version
+          echo "california-housing" > /models/registry/default-model
+          
+          # Create initial metadata
+          cat > /models/registry/metadata.json << METADATA
+          {
+            "registry_version": "1.0",
+            "created_at": "$(date -Iseconds)",
+            "storage_type": "cephfs-rwx",
+            "models": ["california-housing"]
+          }
+          METADATA
+          
+          # List structure
+          echo "Created structure:"
+          find /models -type d | sort
+          
+          echo "Initialization complete!"
+        volumeMounts:
+        - name: model-storage
+          mountPath: /models
+      restartPolicy: Never
+      volumes:
+      - name: model-storage
+        persistentVolumeClaim:
+          claimName: aurora-model-pvc

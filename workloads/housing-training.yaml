@@ -1,0 +1,10 @@
+apiVersion: aurora.io/v1alpha1
+kind: MLTrainingJob
+metadata:
+  name: housing
+  namespace: aurora-system
+spec:
+  modelName: california-housing
+  dataset: synthetic
+  algorithm: random_forest
+
