@@ -416,4 +416,25 @@ This phase establishes that Aurora is not just deployable — it is **operable**
 - Clear separation of concerns
 - Operational discipline (GitOps, immutability, safety-first)
 
+on inference.aurora.aayushmandev.space/docs
+
+key - aurora-internal-key
+text box = 
+
+{
+  "inputs": [
+    [0.42, 0.18, 0.73, 0.05, 0.91, 0.34, 0.67, 0.28]
+  ]
+}
+
+
+on server 
+root@control01:~# curl -X POST   "https://inference.aurora.aayushmandev.space/predict?key=aurora-internal-key"   -H "Content-Type: application/json"   -d '{
+    "inputs": [
+      [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8],
+      [0.9, 0.8, 0.7, 0.6, 0.5, 0.4, 0.3, 0.2]
+    ]
+  }'
+
+
 
