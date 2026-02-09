@@ -1,440 +1,177 @@
-# Aurora MLOps Platform — Architecture
+# Aurora ML Platform — Architecture
 
 ## Overview
 
-Aurora is a production-style MLOps platform designed around **Kubernetes-native control**, **progressive delivery**, and **operational safety**.
-Aurora is not a demo pipeline. It is designed to answer a single question:
-“How do we safely run machine learning in production when things fail?”
-Every architectural decision prioritizes isolation, recoverability, and observability over feature velocity.
+Aurora is a Kubernetes-native Machine Learning platform designed to manage the full ML lifecycle:
+training, versioning, deployment, and inference — with safe rollout strategies such as canary deployments.
 
-The system separates:
-- **Control** (what should happen)
-- **Execution** (training, inference)
-- **State** (models, artifacts)
-- **Signals** (metrics, health)
-
-This mirrors real-world ML platforms used at scale.
+The platform follows **control-plane / data-plane separation**, GitOps principles, and cloud-native observability.
 
 ---
 
 ## High-Level Architecture
 
-GitOps (GitHub)
-  ↓
-Aurora Control Plane (Intent)
-  ↓
-Aurora Operator (Translation)
-  ↓
-Kubernetes Primitives
-  ├── Training Jobs
-  └── Inference Deployments (Stable / Canary)
+┌──────────────┐
+│ GitHub Repo │
+└──────┬───────┘
+       │ CI/CD
+       ▼
+┌────────────────────────┐
+│ GitHub Actions         │
+│ (Self-Hosted Runner)   │
+└────────┬───────────────┘
+         │ kubectl apply
+         ▼
+┌────────────────────────────────────────────┐
+│       Kubernetes Cluster                   │
+│                                            │
+│ ┌──────────────┐      ┌─────────────────┐  │
+│ │ Aurora       │      │ Aurora Operator │  │
+│ │ ControlPlane │◀───▶│ (Kopf)          │  │
+│ └──────┬───────┘      └──────┬──────────┘  │
+│        │ REST API            │ CRDs        │
+│        ▼                     ▼             │
+│ ┌──────────────┐        ┌────────────────┐ │ 
+│ │ Inference    │◀───── │ MLTrainingJob   │ │
+│ │ Runtime      │        │ MLDeployment   │ │
+│ └──────────────┘        └────────────────┘ │
+│    │                                       │
+│    ▼                                       │
+│ ┌──────────────────────────────────────┐   │
+│ │ CephFS (RWX Shared Model Storage)    │   │
+│ └──────────────────────────────────────┘   │
+│                                            │
+└────────────────────────────────────────────┘
 
-
-
-Storage and observability are shared primitives.
 
 ---
 
-## Control Plane
+## Core Components
 
-**Component:** `aurora-control-plane`
+### 1. Aurora Control Plane
 
+**Technology:** FastAPI  
 **Responsibilities:**
-- Platform APIs (`/health`, `/platform/info`)
-- Cluster visibility (nodes, storage classes)
-- Metrics exposure (Prometheus)
-- Authentication via internal API key
-- Optional controller bootstrap
+- Serve model metadata and artifacts
+- Provide cluster & storage introspection
+- Enforce API-key authentication
+- Expose Prometheus metrics
 
-**Key properties:**
-- Stateless
-- Horizontally scalable
-- Does NOT run training or inference
+**Key APIs:**
+- `/models/{model}/{ref}`
+- `/models/{model}/{ref}/artifact`
+- `/cluster/nodes`
+- `/storage/classes`
+- `/metrics`
 
-This mirrors how real platforms avoid coupling control and execution.
+Mounted with **RWX CephFS** at `/shared-models`.
 
 ---
 
-## Operator Layer
+### 2. Model Storage Layer
 
-**Component:** `aurora-operator` (Kopf-based)
+**Storage Type:** CephFS (ReadWriteMany)  
+**PVC:** `aurora-model-pvc`
 
-**CRDs:**
+**Directory Layout**
+/shared-models/aurora/
+├── registry/
+│ ├── current-version
+│ └── metadata.json
+├── california-housing/
+│ ├── versions/
+│ │ └── vYYYYMMDD-HHMMSS/
+│ │ ├── model.pkl
+│ │ └── metadata.json
+│ └── aliases/
+│ ├── stable -> versions/vX
+│ └── canary -> versions/vY
+
+
+
+Initialized via a Kubernetes Job.
+
+---
+
+### 3. Aurora Operator
+
+**Framework:** Kopf  
+**CRDs Managed:**
 - `MLTrainingJob`
 - `MLDeployment`
 
-**Responsibilities:**
-- Watch custom resources
-- Translate intent → Kubernetes primitives
-- Create training Jobs
-- Maintain status fields
+#### MLTrainingJob Flow
+1. CR created
+2. Operator spawns Kubernetes Job
+3. Trainer container:
+   - Trains model
+   - Writes artifact + metadata to CephFS
+4. Status updated
 
-The operator is **event-driven**, not cron-driven.
-
----
-
-## Training Flow
-
-1. User applies `MLTrainingJob`
-2. Operator creates Kubernetes Job
-3. Trainer writes model to shared RWX volume
-4. Metadata and version are materialized
-5. Status is updated on CRD
-
-Training is **fully decoupled** from inference.
+#### MLDeployment Flow
+- Tracks rollout intent
+- Stores canary/stable metadata
+- Ready for automated promotion logic
 
 ---
 
-## Storage Design
+### 4. Training Runtime
 
-**Primary storage:** CephFS (RWX)
-
-**Why RWX matters:**
-- Multiple pods read same model
-- Zero-copy model promotion
-- No object-store credentials in inference
-
-**Layout (simplified):**
-/models/
-└── california-housing/
-├── versions/
-│ └── vYYYYMMDD-HHMMSS/
-└── latest/
-
-
-This avoids pulling models at runtime.
+**Containerized Trainer**
+- Uses scikit-learn
+- Version generated via timestamp
+- Writes directly to shared model store
+- Fully decoupled from inference
 
 ---
 
-## Inference Layer
+### 5. Inference Runtime
 
-**Deployments:**
-- `aurora-inference` (stable)
-- `aurora-inference-canary`
+**Design Highlights**
+- Stateless containers
+- Fetch models at startup
+- Cache locally
+- No rebuild required for promotion
 
-**Characteristics:**
-- Read-only model mount
-- Startup validation via initContainer
-- Readiness tied to model availability
-- Explicit canary labeling
+**Deployment Types**
+- Stable deployment (replicas = 3)
+- Canary deployment (replicas = 1)
 
-Inference pods never talk to MLflow or S3.
-
----
-
-## Canary & Traffic Control
-
-Canary failures are designed to be survivable by default, not detected after damage occurs.
-
-**Ingress:** NGINX
-
-**Strategy:**
+**Traffic Splitting**
+- NGINX Ingress canary annotations
 - Weight-based routing
-- Separate services for stable/canary
-- Same code, different labels
-
-This enables:
-- Safe production testing
-- Side-by-side metric comparison
-- Fast rollback
 
 ---
 
-## Observability
+### 6. Observability
 
-**Metrics exposed:**
+**Metrics**
 - Request count
-- Latency histogram
-- Error rate
-- Model version label
+- Latency histograms
+- Error counters
+- Model loaded gauge
 
-**Why model version labels matter:**
-You can answer:
-> “Which model version caused the regression?”
-
-This is often missing in toy projects.
+**Scraped by Prometheus** via annotations.
 
 ---
 
 ## Design Principles
 
+- Kubernetes-native first
+- API-driven ML lifecycle
+- Storage-backed model registry
 - GitOps as source of truth
-- No runtime secrets in inference
-- Fail-safe defaults
-- Control ≠ execution
-- Explicit versioning
+- Safe rollout via canaries
+- Zero-downtime inference updates
 
 ---
 
-# Aurora Platform – Phase 4 Completion Report
-
-**Phase:** 4 – SRE & Chaos Engineering
-
-**Status:** ✅ COMPLETED (Production-Validated)
-
-**Scope:** Reliability, resilience, failure tolerance, and operational correctness of the Aurora ML platform under real-world failure scenarios.
-
-Non-goals:
-- Achieving zero failures
-- Synthetic chaos without operational relevance
----
-
-## 1. Objective of Phase 4
-
-Phase 4 was designed to validate that the Aurora platform can **survive, isolate, and recover from failures** without user-visible outages or unsafe behavior.
-
-This phase intentionally avoided feature development. The focus was on:
-
-* Runtime safety
-* Infrastructure resilience
-* Canary isolation
-* Storage correctness
-* Observability under stress
-
-The goal was not to simulate artificial chaos, but to prove that **realistic production failures are handled safely by design**.
-
----
-
-## 2. System Under Test (SUT)
-
-### Core Components
-
-* Kubernetes multi-node cluster (control plane + workers)
-* NGINX Ingress Controller with TLS (cert-manager, Let’s Encrypt)
-* HAProxy TCP passthrough (bare-metal)
-* Aurora Control Plane (FastAPI + Kopf operator)
-* Aurora Inference Runtime (FastAPI)
-* RWX shared model storage (CephFS)
-* Canary + Stable inference deployments
-* GitOps-managed manifests
-* Prometheus metrics endpoint
-
-### Key Architectural Guarantees
-
-* Control plane is **not** a runtime dependency
-* Inference serves traffic independently of training
-* Canary traffic is explicitly bounded
-* Models are gated via init containers and readiness probes
-
----
-
-## 3. Phase 4 Test Matrix & Results
-
-### 3.1 Inference Layer Failures
-
-#### Test 4.1.1 – Canary Pod Termination
-
-**Action:** Deleted canary inference pod
-
-**Expected Behavior:**
-
-* Canary pod recreated automatically
-* Stable traffic unaffected
-* No external outage
-
-**Observed Result:**
-
-* Canary pod recreated within seconds
-* Stable pods unaffected
-* HTTPS traffic uninterrupted
-
-**Status:** ✅ PASS
-
----
-
-#### Test 4.1.2 – Stable Pod Termination (All Replicas)
-
-**Action:** Deleted all stable inference pods simultaneously
-
-**Expected Behavior:**
-
-* Canary temporarily absorbs traffic
-* Stable pods recreated automatically
-* No sustained outage
-
-**Observed Result:**
-
-* 30/30 health checks returned HTTP 200
-* Canary remained healthy throughout
-* Stable pods recovered in ~90–100 seconds
-* No readiness violations
-
-**Status:** ✅ PASS
-
----
-
-### 3.2 Canary Safety & Isolation
-
-**Validation Method:** Architectural isolation rather than synthetic fault injection.
-
-**Guarantees Verified:**
-
-* Canary ingress isolated from TLS and ACME ownership
-* Canary traffic limited to configured weight
-* Canary restarts do not affect stable
-* Canary changes do not propagate to stable
-
-**Result:**
-The system demonstrated **structural canary safety**. Even under replica loss, stable behavior remained correct.
-
-**Status:** ✅ PASS
-
----
-
-### 3.3 Storage Failure Protection
-
-**Validated Mechanisms:**
-
-* RWX shared model PVC (CephFS)
-* Init container enforcing model presence
-* Readiness probe gating traffic until model load
-
-**Observed Behavior:**
-
-* Pods do not become Ready if model is missing
-* No partial or corrupted state served
-* Storage is a hard dependency, not a soft failure
-
-**Status:** ✅ PASS (Design-validated)
-
----
-
-### 3.4 Control Plane Resilience
-
-**Architecture Review:**
-
-* Control plane deployed separately from inference
-* Inference runtime does not call control APIs
-* CRD reconciliation is eventual, not required at runtime
-
-**Guarantee Proven:**
-
-> Control plane downtime does not impact live inference.
-
-**Status:** ✅ PASS
-
----
-
-### 3.5 Cluster & Node Disruptions
-
-**Indirectly Validated Through:**
-
-* Pod rescheduling
-* Replica recreation
-* Service continuity under churn
-
-**Conclusion:**
-The platform tolerates node-level and pod-level disruptions without inference outage.
-
-**Status:** ✅ PASS
-
----
-
-### 3.6 Observability Under Stress
-
-**Validated Signals:**
-
-* Prometheus metrics endpoint always reachable
-* Metrics persisted through pod restarts
-* No silent failures
-* Model version and request counters remained intact
-
-**Conclusion:**
-Failures are **observable before users are impacted**.
-
-**Status:** ✅ PASS
-
----
-
-## 4. Key Outcomes
-
-### What Was Proven
-
-* The platform is **self-healing**
-* Inference is **highly available**
-* Canary deployments are **safe by design**
-* Storage failures **degrade safely**
-* TLS and ingress are **production-correct**
-* Observability works during failure, not just at rest
-
-### What Was Explicitly Avoided
-
-* Artificial chaos for the sake of chaos
-* Non-representative fault injection
-* Feature creep during reliability validation
-
----
-
-## 5. Limitations & Conscious Trade-offs
-
-The following were identified as **optional enhancements**, not blockers:
-
-* Synthetic fault-injection toggles
-* Automated canary rollback
-* SLO-driven promotion logic
-* Chaos frameworks (Litmus, Chaos Mesh)
-
-These are valuable but **not required** to claim production-readiness at this stage.
-
----
-
-## 6. Final Verdict
-
-> **Phase 4 is complete.**
-
-The Aurora platform has been validated against realistic production failures and has demonstrated correct, resilient behavior without manual intervention.
-
-This phase establishes that Aurora is not just deployable — it is **operable**.
-
----
-
-## 7. Recommended Next Steps
-
-* Freeze architecture and manifests
-* Treat `main` as immutable production state
-* Document this project as a flagship MLOps + SRE system
-* (Optional) Add advanced SRE automation only if strategically beneficial
-
----
-
-**Phase 4 Status:** 🔒 LOCKED
-
-
-## Phase Alignment
-
-- Phase 1: Foundation ✅
-- Phase 2: MLOps Core ✅
-- Phase 3: Progressive Delivery ✅
-- Phase 4: SRE & Chaos ✅
-
-
-## 8. What This Project Demonstrates
-
-- Ability to design Kubernetes-native ML platforms
-- Understanding of production failure modes
-- SRE-style validation, not just deployment
-- Clear separation of concerns
-- Operational discipline (GitOps, immutability, safety-first)
-
-on inference.aurora.aayushmandev.space/docs
-
-key - aurora-internal-key
-text box = 
-
-{
-  "inputs": [
-    [0.42, 0.18, 0.73, 0.05, 0.91, 0.34, 0.67, 0.28]
-  ]
-}
-
-
-on server 
-root@control01:~# curl -X POST   "https://inference.aurora.aayushmandev.space/predict?key=aurora-internal-key"   -H "Content-Type: application/json"   -d '{
-    "inputs": [
-      [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8],
-      [0.9, 0.8, 0.7, 0.6, 0.5, 0.4, 0.3, 0.2]
-    ]
-  }'
-
+## Future Extensions
+
+- Automated canary evaluation
+- SLO-based promotion
+- Model lineage tracking
+- Drift detection
+- Cost-aware scaling
 
 
