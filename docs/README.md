@@ -55,6 +55,9 @@ spec:
   strategy:
     type: Canary
     canaryWeight: 10
+  dataset: synthetic
+  algorithm: random_forest
+
 
 Defines rollout strategy and deployment intent.
 
@@ -81,6 +84,3 @@ Latency
 Errors
 Model versions
 Ready for Grafana dashboards
-
-  dataset: synthetic
-  algorithm: random_forest
