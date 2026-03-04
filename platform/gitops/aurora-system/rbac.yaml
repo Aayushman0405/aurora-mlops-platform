@@ -1,0 +1,56 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: aurora-controller
+rules:
+# ---- Core reads ----
+- apiGroups: [""]
+  resources: ["nodes", "events"]
+  verbs: ["get", "list", "create", "patch"]
+
+- apiGroups: ["storage.k8s.io"]
+  resources: ["storageclasses"]
+  verbs: ["get", "list"]
+
+# ---- CRD discovery (Kopf needs this) ----
+- apiGroups: ["apiextensions.k8s.io"]
+  resources: ["customresourcedefinitions"]
+  verbs: ["get", "list", "watch"]
+
+# ---- MLTrainingJob ----
+- apiGroups: ["aurora.io"]
+  resources: ["mltrainingjobs"]
+  verbs: ["get", "list", "watch", "patch", "update"]
+
+- apiGroups: ["aurora.io"]
+  resources: ["mltrainingjobs/status"]
+  verbs: ["patch", "update"]
+
+# ---- MLDeployment ----
+- apiGroups: ["aurora.io"]
+  resources: ["mldeployments"]
+  verbs: ["get", "list", "watch", "patch", "update"]
+
+- apiGroups: ["aurora.io"]
+  resources: ["mldeployments/status"]
+  verbs: ["patch", "update"]
+
+# ---- Batch Jobs ----
+- apiGroups: ["batch"]
+  resources: ["jobs"]
+  verbs: ["create", "get", "list", "watch"]
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: aurora-controller-binding
+subjects:
+- kind: ServiceAccount
+  name: aurora-sa
+  namespace: aurora-system
+roleRef:
+  kind: ClusterRole
+  name: aurora-controller
+  apiGroup: rbac.authorization.k8s.io
+

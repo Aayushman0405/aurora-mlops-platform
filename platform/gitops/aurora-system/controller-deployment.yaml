@@ -1,0 +1,33 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: aurora-controller
+  namespace: aurora-system
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: aurora-controller
+  template:
+    metadata:
+      labels:
+        app: aurora-controller
+    spec:
+      serviceAccountName: aurora-sa
+      containers:
+      - name: controller
+        image: aayud/aurora-platform:v0.7.0
+        imagePullPolicy: Always
+        env:
+          - name: ENABLE_CONTROLLER
+            value: "true"
+          - name: AURORA_API_KEY
+            value: "aurora-internal-key"
+          - name: PYTHONPATH
+            value: "/app"
+        command:
+          - kopf
+          - run
+          - --standalone
+          - aurora_operator/main.py
+

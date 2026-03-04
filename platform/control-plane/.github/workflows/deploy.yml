@@ -1,0 +1,36 @@
+name: Build & Deploy AURORA Control Plane
+
+on:
+  push:
+    branches: [ "main" ]
+
+jobs:
+  deploy:
+    runs-on: self-hosted
+
+    steps:
+    - name: Checkout aurora-platform
+      uses: actions/checkout@v4
+      with:
+        path: aurora-platform
+
+    - name: Checkout aurora-gitops
+      uses: actions/checkout@v4
+      with:
+        repository: Aayushman0405/aurora-gitops
+        path: aurora-gitops
+
+    - name: Docker Login
+      run: |
+        echo "${{ secrets.DOCKERHUB_TOKEN }}" | docker login \
+          -u "${{ secrets.DOCKERHUB_USERNAME }}" --password-stdin
+
+    - name: Build & Push Image
+      working-directory: aurora-platform
+      run: |
+        docker build -t aayud/aurora-platform:latest .
+        docker push aayud/aurora-platform:latest
+
+    - name: Deploy to Kubernetes
+      run: |
+        kubectl apply -f aurora-gitops/aurora-system/

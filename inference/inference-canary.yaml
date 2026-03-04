@@ -1,0 +1,50 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: aurora-inference-canary
+  namespace: aurora-system
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: aurora-inference
+      track: canary
+  template:
+    metadata:
+      labels:
+        app: aurora-inference
+        track: canary
+    spec:
+      containers:
+      - name: inference
+        image: aayud/aurora-inference:http-canary-v2
+        ports:
+        - containerPort: 8000
+
+        env:
+        - name: API_KEY
+          value: aurora-internal-key
+
+        - name: MODEL_NAME
+          value: california-housing
+        - name: MODEL_REF
+          value: canary
+        - name: MODEL_FETCH_URL
+          value: http://aurora.aurora-system.svc.cluster.local/models
+        - name: MODEL_CACHE_DIR
+          value: /var/models
+
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8000
+          initialDelaySeconds: 25
+          periodSeconds: 5
+
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8000
+          initialDelaySeconds: 45
+          periodSeconds: 10
+

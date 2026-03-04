@@ -1,0 +1,73 @@
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: mldeployments.aurora.io
+spec:
+  group: aurora.io
+  scope: Namespaced
+  names:
+    plural: mldeployments
+    singular: mldeployment
+    kind: MLDeployment
+    shortNames:
+      - mld
+  versions:
+    - name: v1alpha1
+      served: true
+      storage: true
+
+      subresources:
+        status: {}
+
+      schema:
+        openAPIV3Schema:
+          type: object
+          properties:
+            spec:
+              type: object
+              required:
+                - modelName
+                - strategy
+              properties:
+                modelName:
+                  type: string
+
+                strategy:
+                  type: object
+                  required:
+                    - type
+                  properties:
+                    type:
+                      type: string
+                      enum: ["Canary"]
+                    canaryWeight:
+                      type: integer
+                      minimum: 1
+                      maximum: 50
+                      default: 10
+
+                slo:
+                  type: object
+                  properties:
+                    latencyP95Ms:
+                      type: integer
+                      default: 300
+                    errorRatePercent:
+                      type: number
+                      default: 1.0
+                    evaluationWindowSeconds:
+                      type: integer
+                      default: 120
+
+            status:
+              type: object
+              properties:
+                phase:
+                  type: string
+                stableVersion:
+                  type: string
+                canaryVersion:
+                  type: string
+                decision:
+                  type: string
+

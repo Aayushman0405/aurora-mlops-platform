@@ -11,7 +11,8 @@ RUN pip install --no-cache-dir \
     scikit-learn \
     joblib \
     prometheus-client \
-    pydantic
+    pydantic \
+    requests
 
 COPY app ./app
 

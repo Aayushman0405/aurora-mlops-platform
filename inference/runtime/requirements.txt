@@ -4,4 +4,4 @@ prometheus-client
 pydantic
 joblib
 numpy
-
+requests
